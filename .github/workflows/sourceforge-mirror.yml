@@ -38,10 +38,22 @@ jobs:
         env:
           SF_SSH_KEY: ${{ secrets.SF_SSH_KEY }}
         run: |
+          if [ -z "${SF_SSH_KEY//[[:space:]]/}" ]; then
+            echo "::error::SF_SSH_KEY is empty. Add the SourceForge private key as an" \
+                 "Actions *repository* secret named SF_SSH_KEY in ${GITHUB_REPOSITORY}" \
+                 "(Settings > Secrets and variables > Actions > Repository secrets)." \
+                 "Environment and Dependabot secrets are not visible here."
+            exit 1
+          fi
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          printf '%s\n' "$SF_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$SF_SSH_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
+          if ! ssh-keygen -y -f ~/.ssh/id_ed25519 > /dev/null 2>&1; then
+            echo "::error::SF_SSH_KEY is set but is not a usable private key." \
+                 "Copy the whole file including the BEGIN/END lines and a trailing newline."
+            exit 1
+          fi
           ssh-keyscan -t rsa,ecdsa,ed25519 git.code.sf.net >> ~/.ssh/known_hosts
 
       - name: Push to SourceForge
