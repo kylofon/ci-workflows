@@ -50,8 +50,37 @@ jobs:
           printf '%s\n' "$SF_SSH_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           if ! ssh-keygen -y -f ~/.ssh/id_ed25519 > /dev/null 2>&1; then
-            echo "::error::SF_SSH_KEY is set but is not a usable private key." \
-                 "Copy the whole file including the BEGIN/END lines and a trailing newline."
+            # Report the key's shape, never its body. BEGIN/END markers and a
+            # line count are not sensitive; the base64 payload is.
+            lines=$(wc -l < ~/.ssh/id_ed25519)
+            first=$(head -n 1 ~/.ssh/id_ed25519)
+            last=$(tail -n 1 ~/.ssh/id_ed25519)
+            # Match the marker anywhere on the line: when the newlines are lost
+            # the whole key collapses into one BEGIN...body...END line.
+            case "$first" in
+              *"PRIVATE KEY"*) hdr="ok" ;;
+              *"PUBLIC KEY"*|"ssh-ed25519 "*|"ssh-rsa "*|"ecdsa-sha2-"*) hdr="public" ;;
+              *) hdr="bad" ;;
+            esac
+            echo "::error::SF_SSH_KEY is set but is not a usable private key."
+            echo "  line count : $lines"
+            echo "  first line : $first"
+            echo "  last line  : $last"
+            case "$hdr:$lines" in
+              public:*)
+                echo "  -> This is the PUBLIC key. The secret needs the private half" \
+                     "(the sourceforge_deploy file, not sourceforge_deploy.pub)." ;;
+              ok:0|ok:1)
+                echo "  -> Header is right but the key is on a single line: the newlines" \
+                     "were lost when it was pasted. Re-copy it so every line is preserved," \
+                     "e.g. 'gh secret set SF_SSH_KEY < sourceforge_deploy'." ;;
+              ok:*)
+                echo "  -> Header and line breaks look right, so the base64 body is" \
+                     "truncated or altered. Re-copy the file whole." ;;
+              *)
+                echo "  -> No BEGIN marker found. The secret does not hold an OpenSSH" \
+                     "private key." ;;
+            esac
             exit 1
           fi
           ssh-keyscan -t rsa,ecdsa,ed25519 git.code.sf.net >> ~/.ssh/known_hosts
