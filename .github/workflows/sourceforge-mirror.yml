@@ -1,14 +1,30 @@
-name: Sourceforge Mirror (reusable)
+name: SourceForge Mirror (reusable)
 
 on:
   workflow_call:
     inputs:
       sf_project:
+        description: SourceForge project unix name (the SLUG in /p/SLUG/code)
         required: true
+        type: string
+      sf_user:
+        description: SourceForge username used for SSH auth
+        required: false
+        default: kylofon
+        type: string
+      branch:
+        description: Branch name to push on SourceForge. Defaults to the branch that triggered the run.
+        required: false
+        default: ''
         type: string
     secrets:
       SF_SSH_KEY:
+        description: Private half of the ed25519 deploy key registered on the SourceForge account
         required: true
+
+concurrency:
+  group: sf-mirror-${{ github.repository }}
+  cancel-in-progress: false
 
 jobs:
   mirror:
@@ -19,14 +35,23 @@ jobs:
           fetch-depth: 0
 
       - name: Set up SSH
+        env:
+          SF_SSH_KEY: ${{ secrets.SF_SSH_KEY }}
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SF_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SF_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -t rsa,ecdsa,ed25519 git.code.sf.net >> ~/.ssh/known_hosts
 
       - name: Push to SourceForge
+        env:
+          SF_REMOTE: ssh://${{ inputs.sf_user }}@git.code.sf.net/p/${{ inputs.sf_project }}/code
+          BRANCH_INPUT: ${{ inputs.branch }}
         run: |
-          git remote add sourceforge ssh://kylofon@git.code.sf.net/p/${{ inputs.sf_project }}/code
-          git push sourceforge main --force
-          git push sourceforge --tags --force
+          target="${BRANCH_INPUT:-$GITHUB_REF_NAME}"
+          git remote add sourceforge "$SF_REMOTE" 2>/dev/null \
+            || git remote set-url sourceforge "$SF_REMOTE"
+          echo "Mirroring $GITHUB_REF_NAME -> $SF_REMOTE ($target)"
+          git push --force sourceforge "HEAD:refs/heads/$target"
+          git push --force --tags sourceforge
